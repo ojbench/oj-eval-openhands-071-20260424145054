@@ -33,7 +33,6 @@ class ACMOJClient:
         self.api_base = "https://acm.sjtu.edu.cn/OnlineJudge/api/v1"
         self.headers = {
             "Authorization": f"Bearer {access_token}",
-            "Content-Type": "application/x-www-form-urlencoded",
             "User-Agent": "ACMOJ-Python-Client/2.2"
         }
 
@@ -41,13 +40,16 @@ class ACMOJClient:
         
 
     def _make_request(self, method: str, endpoint: str, data: Dict[str, Any] = None, 
-                     params: Dict[str, Any] = None) -> Optional[Dict]:
+                     params: Dict[str, Any] = None, use_json: bool = False) -> Optional[Dict]:
         url = f"{self.api_base}{endpoint}"
         try:
             if method.upper() == "GET":
                 response = requests.get(url, headers=self.headers, params=params, timeout=10, proxies={"https": None, "http": None})
             elif method.upper() == "POST":
-                response = requests.post(url, headers=self.headers, data=data, timeout=10, proxies={"https": None, "http": None})
+                if use_json:
+                    response = requests.post(url, headers=self.headers, json=data, timeout=10, proxies={"https": None, "http": None})
+                else:
+                    response = requests.post(url, headers=self.headers, data=data, timeout=10, proxies={"https": None, "http": None})
             else:
                 print(f"Unsupported HTTP method: {method}")
                 return None
@@ -64,8 +66,11 @@ class ACMOJClient:
 
         except requests.exceptions.RequestException as e:
             print(f"API Request failed: {e}")
-            if 'response' in locals() and response:
-                print(f"Response text: {response.text}")
+            if 'response' in locals():
+                try:
+                    print(f"Response text: {response.text}")
+                except:
+                    pass
             return None
 
     def _save_submission_id(self, submission_id):
@@ -83,8 +88,16 @@ class ACMOJClient:
         except Exception as e:
             print(f"⚠️ Warning: Failed to save submission ID: {e}")
 
+    def submit_code(self, problem_id: int, language: str, code: str) -> Optional[Dict]:
+        data = {"language": language, "code": code}
+        result = self._make_request("POST", f"/problem/{problem_id}/submit", data=data)
+        if result and 'id' in result:
+            self._save_submission_id(result['id'])
+        return result
+
     def submit_git(self, problem_id: int, git_url: str) -> Optional[Dict]:
         data = {"language": "git", "code": git_url}
+        print(f"Submitting with data: {data}")
         result = self._make_request("POST", f"/problem/{problem_id}/submit", data=data)
         if result and 'id' in result:
             self._save_submission_id(result['id'])
@@ -130,17 +143,29 @@ def main():
     client = ACMOJClient(args.token)
 
     if args.command == "submit":
+        # For this problem, we need to submit via git
+        # Get the git remote URL
+        import subprocess
         try:
-            with open(args.code_file, 'r', encoding='utf-8') as f:
-                code_text = f.read()
-        except FileNotFoundError:
-            print(f"Error: Code file not found at {args.code_file}")
+            git_url = subprocess.check_output(['git', 'remote', 'get-url', 'origin'], 
+                                             cwd='/workspace/problem_071',
+                                             text=True).strip()
+            # Remove credentials from URL if present
+            if '@' in git_url:
+                parts = git_url.split('@')
+                git_url = 'https://' + parts[1]
+            
+            # Remove .git extension if present, then add it back
+            if git_url.endswith('.git'):
+                pass  # Keep .git
+            else:
+                git_url = git_url + '.git'
+            
+            print(f"Submitting git repository: {git_url}")
+            result = client.submit_git(args.problem_id, git_url)
+        except subprocess.CalledProcessError as e:
+            print(f"Error: Failed to get git remote URL: {e}")
             exit(1)
-        except Exception as e:
-            print(f"Error: Failed to read code file: {e}")
-            exit(1)
-
-        result = client.submit_code(args.problem_id, args.language, code_text)
 
     elif args.command == "status":
         result = client.get_submission_detail(args.submission_id)
