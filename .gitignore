@@ -1,0 +1,5 @@
+tmp/
+*.o
+*.out
+test_gen
+test_gen.cpp
